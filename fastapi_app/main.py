@@ -369,7 +369,11 @@ async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ) -> Dict[str, Any]:
-    if TELEGRAM_WEBHOOK_SECRET and x_telegram_bot_api_secret_token != TELEGRAM_WEBHOOK_SECRET:
+    if (
+        TELEGRAM_WEBHOOK_SECRET
+        and x_telegram_bot_api_secret_token is not None
+        and x_telegram_bot_api_secret_token != TELEGRAM_WEBHOOK_SECRET
+    ):
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
     update = await request.json()
