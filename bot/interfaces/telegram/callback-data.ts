@@ -2,9 +2,12 @@ import type { AnswerId, ThemeId } from "@/bot/domain/game";
 
 const PREFIX = "aki";
 
+export type BotLanguage = "en" | "am";
+
 export type BotAction =
   | { type: "answer"; answer: AnswerId }
   | { type: "theme"; theme: ThemeId }
+  | { type: "language"; language: BotLanguage }
   | { type: "back" }
   | { type: "restart" };
 
@@ -22,6 +25,10 @@ export function encodeRestart(): string {
 
 export function encodeTheme(theme: ThemeId): string {
   return `${PREFIX}:theme:${theme}`;
+}
+
+export function encodeLanguage(language: BotLanguage): string {
+  return `${PREFIX}:language:${language}`;
 }
 
 export function decodeAction(data: string | undefined): BotAction | null {
@@ -45,6 +52,10 @@ export function decodeAction(data: string | undefined): BotAction | null {
 
   if (type === "theme" && value) {
     return { type: "theme", theme: value as ThemeId };
+  }
+
+  if (type === "language" && (value === "en" || value === "am")) {
+    return { type: "language", language: value };
   }
 
   return null;

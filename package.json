@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "eslint",
     "bot:dev": "tsx --env-file=.env bot/main.ts",
-    "bot:start": "node --env-file=.env --import tsx bot/main.ts"
+    "bot:start": "node --env-file=.env --import tsx bot/main.ts",
+    "bot:webhook:set": "node --env-file=.env --import tsx bot/webhook/set-webhook.ts",
+    "python:bridge": "py -m uvicorn bot.infrastructure.akinator.python_bridge_fastapi:app --host 0.0.0.0 --port 8000",
+    "python:bridge:basic": "py bot/infrastructure/akinator/python_bridge_server.py"
   },
   "dependencies": {
     "mongodb": "^7.1.0",

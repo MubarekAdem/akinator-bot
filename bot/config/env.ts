@@ -26,6 +26,10 @@ type BotEnv = {
   mongoUri: string;
   mongoDbName: string;
   pythonBin?: string;
+  bridgeUrl?: string;
+  translateToAmharic: boolean;
+  webhookUrl?: string;
+  webhookSecret?: string;
 };
 
 const SUPPORTED_REGIONS = new Set<string>(regions);
@@ -46,6 +50,10 @@ export function getBotEnv(): BotEnv {
   const mongoUri = process.env.MONGODB_URI?.trim() || "mongodb://127.0.0.1:27017";
   const mongoDbName = process.env.MONGODB_DB_NAME?.trim() || "akinator_bot";
   const pythonBin = process.env.PYTHON_BIN?.trim() || undefined;
+  const bridgeUrl = process.env.AKINATOR_BRIDGE_URL?.trim() || undefined;
+  const translateToAmharic = process.env.AKINATOR_TRANSLATE_TO_AMHARIC === "true";
+  const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL?.trim() || undefined;
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim() || undefined;
 
   return {
     token,
@@ -54,5 +62,9 @@ export function getBotEnv(): BotEnv {
     mongoUri,
     mongoDbName,
     pythonBin,
+    bridgeUrl,
+    translateToAmharic,
+    webhookUrl,
+    webhookSecret,
   };
 }

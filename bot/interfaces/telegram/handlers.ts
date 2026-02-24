@@ -1,11 +1,13 @@
 import { type Context, type Telegraf } from "telegraf";
 import type { CallbackQuery, Message } from "telegraf/types";
 import type { AkinatorGameService } from "@/bot/application/services/akinator-game.service";
-import { decodeAction } from "@/bot/interfaces/telegram/callback-data";
-import { gameKeyboard, themeKeyboard, winKeyboard } from "@/bot/interfaces/telegram/keyboards";
+import { type BotLanguage, decodeAction } from "@/bot/interfaces/telegram/callback-data";
+import { gameKeyboard, languageKeyboard, themeKeyboard, winKeyboard } from "@/bot/interfaces/telegram/keyboards";
+import { translateToAmharic } from "@/bot/interfaces/telegram/translation";
 import type { GameState, ThemeId } from "@/bot/domain/game";
 
 const selectedThemeByChat = new Map<number, ThemeId>();
+const selectedLanguageByChat = new Map<number, BotLanguage>();
 
 function getChatIdFromCallback(callbackQuery: CallbackQuery): number | null {
   if (!("message" in callbackQuery) || !callbackQuery.message) {
@@ -20,77 +22,123 @@ function getChatIdFromCallback(callbackQuery: CallbackQuery): number | null {
   return callbackMessage.chat.id;
 }
 
-function questionText(state: Extract<GameState, { isWin: false }>): string {
-  return `🤔 ${state.question.text}\n\nProgress: ${state.question.progress.toFixed(1)}%`;
+type HandlerOptions = {
+  translateToAmharic?: boolean;
+};
+
+function isAmharic(options?: HandlerOptions): boolean {
+  return Boolean(options?.translateToAmharic);
 }
 
-function guessText(state: Extract<GameState, { isWin: true }>): string {
-  return `🎯 I guess: *${state.guess.name}*\n\n${state.guess.description}`;
+function localize(en: string, am: string, options?: HandlerOptions): string {
+  return isAmharic(options) ? am : en;
 }
 
-async function askTheme(ctx: Context): Promise<void> {
-  await ctx.reply("Choose a game theme before we start:", {
-    ...themeKeyboard(),
+function chatOptions(chatId: number, options?: HandlerOptions): HandlerOptions {
+  const selectedLanguage = selectedLanguageByChat.get(chatId);
+  if (selectedLanguage === "am") {
+    return { translateToAmharic: true };
+  }
+
+  if (selectedLanguage === "en") {
+    return { translateToAmharic: false };
+  }
+
+  return options;
+}
+
+async function askLanguage(ctx: Context): Promise<void> {
+  await ctx.reply("Choose your language / ቋንቋዎን ይምረጡ:", {
+    ...languageKeyboard(),
   });
 }
 
-function promptByTheme(theme: ThemeId): string {
+async function questionText(
+  state: Extract<GameState, { isWin: false }>,
+  options?: HandlerOptions,
+): Promise<string> {
+  const translatedQuestion = await translateToAmharic(
+    state.question.text,
+    Boolean(options?.translateToAmharic),
+  );
+
+  const progressLabel = options?.translateToAmharic ? "እድገት" : "Progress";
+  return `🤔 ${translatedQuestion}\n\n${progressLabel}: ${state.question.progress.toFixed(1)}%`;
+}
+
+function guessText(state: Extract<GameState, { isWin: true }>, options?: HandlerOptions): string {
+  const guessLabel = localize("I guess", "ግምቴ", options);
+  return `🎯 ${guessLabel}: *${state.guess.name}*\n\n${state.guess.description}`;
+}
+
+async function askTheme(ctx: Context, options?: HandlerOptions): Promise<void> {
+  await ctx.reply(localize("Choose a game theme before we start:", "ከመጀመር በፊት የጨዋታ አይነት ይምረጡ:", options), {
+    ...themeKeyboard(options),
+  });
+}
+
+function promptByTheme(theme: ThemeId, options?: HandlerOptions): string {
   if (theme === "animals") {
-    return "Think of an animal. I will try to guess it.";
+    return localize("Think of an animal. I will try to guess it.", "አንድ እንስሳ ያስቡ። ልገምተው እሞክራለሁ።", options);
   }
 
   if (theme === "objects") {
-    return "Think of an object. I will try to guess it.";
+    return localize("Think of an object. I will try to guess it.", "አንድ እቃ ያስቡ። ልገምተው እሞክራለሁ።", options);
   }
 
-  return "Think of a real or fictional character. I will try to guess it.";
+  return localize(
+    "Think of a real or fictional character. I will try to guess it.",
+    "እውነተኛ ወይም ምናባዊ ባህሪ ያስቡ። ልገምተው እሞክራለሁ።",
+    options,
+  );
 }
 
-async function renderState(ctx: Context, state: GameState) {
+async function renderState(ctx: Context, state: GameState, options?: HandlerOptions) {
   if (!state.isWin) {
-    await ctx.reply(questionText(state), {
-      ...gameKeyboard(),
+    await ctx.reply(await questionText(state, options), {
+      ...gameKeyboard(options),
     });
     return;
   }
 
   if (state.guess.photoUrl) {
     await ctx.replyWithPhoto(state.guess.photoUrl, {
-      caption: guessText(state),
+      caption: guessText(state, options),
       parse_mode: "Markdown",
-      ...winKeyboard(),
+      ...winKeyboard(options),
     });
     return;
   }
 
-  await ctx.reply(guessText(state), {
+  await ctx.reply(guessText(state, options), {
     parse_mode: "Markdown",
-    ...winKeyboard(),
+    ...winKeyboard(options),
   });
 }
 
 async function renderStateInCallback(
   ctx: Context,
   state: GameState,
+  options?: HandlerOptions,
 ) {
   if (!state.isWin) {
-    await ctx.editMessageText(questionText(state), {
-      ...gameKeyboard(),
+    await ctx.editMessageText(await questionText(state, options), {
+      ...gameKeyboard(options),
     });
     return;
   }
 
-  const message = guessText(state);
+  const message = guessText(state, options);
   await ctx.editMessageText(message, {
     parse_mode: "Markdown",
-    ...winKeyboard(),
+    ...winKeyboard(options),
   });
 
   if (state.guess.photoUrl) {
     await ctx.replyWithPhoto(state.guess.photoUrl, {
       caption: message,
       parse_mode: "Markdown",
-      ...winKeyboard(),
+      ...winKeyboard(options),
     });
   }
 }
@@ -111,38 +159,56 @@ function conciseError(error: unknown): string {
   return String(error);
 }
 
-export function registerHandlers(bot: Telegraf, gameService: AkinatorGameService): void {
+export function registerHandlers(
+  bot: Telegraf,
+  gameService: AkinatorGameService,
+  options?: HandlerOptions,
+): void {
   bot.start(async (ctx) => {
     try {
       selectedThemeByChat.delete(ctx.chat.id);
-      await askTheme(ctx);
+      selectedLanguageByChat.delete(ctx.chat.id);
+      await askLanguage(ctx);
     } catch (error) {
       console.error("Failed to handle /start", conciseError(error));
       if (isCloudflareBlockError(error)) {
-        await ctx.reply("Akinator blocked this server IP (Cloudflare 403). Run the bot from a different server/network.");
+        await ctx.reply(localize(
+          "Akinator blocked this server IP (Cloudflare 403). Run the bot from a different server/network.",
+          "Akinator ይህን የሰርቨር IP አግዷል (Cloudflare 403)። ቦቱን ከሌላ ኔትወርክ/ሰርቨር ያስኪዱ።",
+          options,
+        ));
         return;
       }
 
-      await ctx.reply(
+      await ctx.reply(localize(
         "Akinator service is unavailable right now (blocked or unreachable). Please try again later or run from another network/server.",
-      );
+        "የAkinator አገልግሎት አሁን አይገኝም (ታግዷል ወይም መድረስ አይቻልም)። እባክዎ በኋላ ይሞክሩ ወይም ከሌላ ኔትወርክ/ሰርቨር ያስኪዱ።",
+        options,
+      ));
     }
   });
 
   bot.command("new", async (ctx) => {
     try {
       selectedThemeByChat.delete(ctx.chat.id);
-      await askTheme(ctx);
+      selectedLanguageByChat.delete(ctx.chat.id);
+      await askLanguage(ctx);
     } catch (error) {
       console.error("Failed to handle /new", conciseError(error));
       if (isCloudflareBlockError(error)) {
-        await ctx.reply("Akinator blocked this server IP (Cloudflare 403). Run the bot from a different server/network.");
+        await ctx.reply(localize(
+          "Akinator blocked this server IP (Cloudflare 403). Run the bot from a different server/network.",
+          "Akinator ይህን የሰርቨር IP አግዷል (Cloudflare 403)። ቦቱን ከሌላ ኔትወርክ/ሰርቨር ያስኪዱ።",
+          options,
+        ));
         return;
       }
 
-      await ctx.reply(
+      await ctx.reply(localize(
         "Cannot start a new game right now because Akinator is blocked or unreachable.",
-      );
+        "Akinator ታግዷል ወይም መድረስ ስለማይቻል አዲስ ጨዋታ አሁን መጀመር አይቻልም።",
+        options,
+      ));
     }
   });
 
@@ -151,30 +217,49 @@ export function registerHandlers(bot: Telegraf, gameService: AkinatorGameService
     const action = decodeAction(callbackData);
 
     if (!action) {
-      await ctx.answerCbQuery("Unknown action.");
+      await ctx.answerCbQuery(localize("Unknown action.", "ያልታወቀ እርምጃ።", options));
       return;
     }
 
     const chatId = getChatIdFromCallback(ctx.callbackQuery);
     if (!chatId) {
-      await ctx.answerCbQuery("Unable to detect chat.");
+      await ctx.answerCbQuery(localize("Unable to detect chat.", "ቻት መለየት አልተቻለም።", options));
       return;
     }
 
     try {
+      const currentOptions = chatOptions(chatId, options);
+
+      if (action.type === "language") {
+        selectedLanguageByChat.set(chatId, action.language);
+        const nextOptions = chatOptions(chatId, options);
+        await ctx.editMessageText(localize("Language selected.", "ቋንቋ ተመርጧል።", nextOptions));
+        await askTheme(ctx, nextOptions);
+        await ctx.answerCbQuery(localize("Language selected", "ቋንቋ ተመርጧል", nextOptions));
+        return;
+      }
+
+      if (!selectedLanguageByChat.has(chatId)) {
+        await ctx.answerCbQuery("Choose language first.");
+        await askLanguage(ctx);
+        return;
+      }
+
       if (action.type === "theme") {
         selectedThemeByChat.set(chatId, action.theme);
         const state = await gameService.start(chatId, action.theme);
-        await ctx.editMessageText(promptByTheme(action.theme));
-        await renderState(ctx, state);
-        await ctx.answerCbQuery(`Theme selected: ${action.theme}`);
+        await ctx.editMessageText(promptByTheme(action.theme, currentOptions));
+        await renderStateInCallback(ctx, state, currentOptions);
+        await ctx.answerCbQuery(
+          localize(`Theme selected: ${action.theme}`, `አይነት ተመርጧል: ${action.theme}`, currentOptions),
+        );
         return;
       }
 
       if (!selectedThemeByChat.has(chatId)) {
-        await ctx.answerCbQuery("Pick a theme first.");
-        await ctx.reply("Choose a game theme to start:", {
-          ...themeKeyboard(),
+        await ctx.answerCbQuery(localize("Pick a theme first.", "መጀመሪያ አንድ አይነት ይምረጡ።", currentOptions));
+        await ctx.reply(localize("Choose a game theme to start:", "ለመጀመር የጨዋታ አይነት ይምረጡ:", currentOptions), {
+          ...themeKeyboard(currentOptions),
         });
         return;
       }
@@ -186,18 +271,28 @@ export function registerHandlers(bot: Telegraf, gameService: AkinatorGameService
             ? await gameService.back(chatId)
             : await gameService.restartWithTheme(chatId, selectedThemeByChat.get(chatId) ?? "characters");
 
-      await renderStateInCallback(ctx, state);
+      await renderStateInCallback(ctx, state, currentOptions);
       await ctx.answerCbQuery();
     } catch (error) {
       console.error("Failed to handle callback query", conciseError(error));
 
+      const currentOptions = chatOptions(chatId, options);
+
       if (isCloudflareBlockError(error)) {
-        await ctx.answerCbQuery("Akinator blocked this server IP.");
-        await ctx.reply("Akinator blocked this server IP (Cloudflare 403). Run the bot from a different server/network.");
+        await ctx.answerCbQuery(localize("Akinator blocked this server IP.", "Akinator ይህን የሰርቨር IP አግዷል።", currentOptions));
+        await ctx.reply(localize(
+          "Akinator blocked this server IP (Cloudflare 403). Run the bot from a different server/network.",
+          "Akinator ይህን የሰርቨር IP አግዷል (Cloudflare 403)። ቦቱን ከሌላ ኔትወርክ/ሰርቨር ያስኪዱ።",
+          currentOptions,
+        ));
         return;
       }
 
-      await ctx.answerCbQuery("Something went wrong. Use /new to try again.");
+      await ctx.answerCbQuery(localize(
+        "Something went wrong. Use /new to try again.",
+        "ችግኝ ተፈጥሯል። እባክዎ /new በመጠቀም ደግመው ይሞክሩ።",
+        currentOptions,
+      ));
     }
   });
 
@@ -206,8 +301,15 @@ export function registerHandlers(bot: Telegraf, gameService: AkinatorGameService
       return;
     }
 
+    const currentOptions = chatOptions(ctx.chat.id, options);
+
+    if (!selectedLanguageByChat.has(ctx.chat.id)) {
+      await ctx.reply(localize("Use /start and choose a language first.", " /start ይጠቀሙ እና መጀመሪያ ቋንቋ ይምረጡ።", currentOptions));
+      return;
+    }
+
     if (!selectedThemeByChat.has(ctx.chat.id)) {
-      await ctx.reply("Use /start and choose a theme first.");
+      await ctx.reply(localize("Use /start and choose a theme first.", " /start ይጠቀሙ እና መጀመሪያ አይነት ይምረጡ።", currentOptions));
       return;
     }
 
@@ -215,6 +317,10 @@ export function registerHandlers(bot: Telegraf, gameService: AkinatorGameService
       return;
     }
 
-    await ctx.reply("Use /start to begin, then answer using the buttons.");
+    await ctx.reply(localize(
+      "Use /start to begin, then answer using the buttons.",
+      "ለመጀመር /start ይጠቀሙ፣ ከዚያ በአዝራሮቹ ይመልሱ።",
+      currentOptions,
+    ));
   });
 }
