@@ -1,36 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Telegram Akinator Bot
 
-## Getting Started
+Telegram bot built with clean architecture and powered by `akinator.py` via a Python bridge.
 
-First, run the development server:
+## Environment
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Create `.env` with:
+
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token
+AKINATOR_REGION=en
+AKINATOR_CHILD_MODE=false
+# optional: absolute path to python executable if auto-detection fails
+# PYTHON_BIN=C:\\Python311\\python.exe
+MONGODB_URI=mongodb://127.0.0.1:27017
+MONGODB_DB_NAME=akinator_bot
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- `TELEGRAM_BOT_TOKEN` is required.
+- `AKINATOR_REGION` is optional (defaults to `en`).
+- `AKINATOR_CHILD_MODE` is optional (`true` or `false`, defaults to `false`).
+- `PYTHON_BIN` is optional. If omitted, the bot tries `py -3`, then `python3`, then `python`.
+- `MONGODB_URI` is optional (defaults to `mongodb://127.0.0.1:27017`).
+- `MONGODB_DB_NAME` is optional (defaults to `akinator_bot`).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Install Python dependency once:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+py -3 -m pip install akinator
+```
 
-## Learn More
+## Run Bot
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm install
+npm run bot:dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Production start:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run bot:start
+```
 
-## Deploy on Vercel
+## Troubleshooting
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+If `/start` does not begin a game and you see `AKINATOR_CLOUDFLARE_BLOCK`, the Akinator website is blocking your runtime IP (Cloudflare 403).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+What to do:
+
+- Run the bot from another network or a VPS/datacenter with a clean IP.
+- Keep using long polling (`npm run bot:dev`) once connectivity works.
+
+## Bot Flow
+
+- User sends `/start`.
+- Bot shows theme selection (Characters / Objects / Animals).
+- Bot starts Akinator after selected theme.
+- Bot shows answer buttons (Yes / No / I don't know / Probably / Probably not).
+- User can use `Back` and `Restart` buttons.
+- When progress reaches a guess, bot sends result and offers `Play again`.
+
+## Architecture
+
+```
+bot/
+	application/
+		ports/
+		services/
+	config/
+	domain/
+	infrastructure/
+		akinator/
+	interfaces/
+		telegram/
+```
+
+- `domain`: core game models and answer options.
+- `application`: use-case service and abstraction ports.
+- `infrastructure`: Python bridge (`akinator.py`) + Mongo session store.
+- `interfaces`: Telegram handlers and inline keyboards.
+- `config`: environment validation and defaults.
