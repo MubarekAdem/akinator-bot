@@ -2,11 +2,14 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 from typing import Any, Dict, Literal
 
 import requests
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from pymongo import MongoClient
 
@@ -28,6 +31,7 @@ mongo = MongoClient(MONGODB_URI)
 db = mongo[MONGODB_DB_NAME]
 sessions = db["game_sessions"]
 chat_prefs = db["chat_prefs"]
+users = db["users"]
 
 API_URL = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -306,7 +310,35 @@ def parse_action(data: str) -> Dict[str, str] | None:
     return {"type": action_type, "value": value}
 
 
-def handle_start(chat_id: int) -> None:
+def track_user_start(chat_id: int, user: Dict[str, Any] | None) -> None:
+    user = user or {}
+    first_name = (user.get("first_name") or "").strip()
+    last_name = (user.get("last_name") or "").strip()
+    username = (user.get("username") or "").strip()
+    full_name = f"{first_name} {last_name}".strip()
+
+    users.update_one(
+        {"chatId": chat_id},
+        {
+            "$set": {
+                "chatId": chat_id,
+                "name": full_name,
+                "username": username,
+                "updatedAt": datetime.now(timezone.utc),
+            },
+            "$setOnInsert": {
+                "firstStartedAt": datetime.now(timezone.utc),
+            },
+            "$inc": {
+                "startCount": 1,
+            },
+        },
+        upsert=True,
+    )
+
+
+def handle_start(chat_id: int, user: Dict[str, Any] | None) -> None:
+    track_user_start(chat_id, user)
     sessions.delete_one({"chatId": chat_id})
     ask_language(chat_id)
 
@@ -424,6 +456,70 @@ def health() -> Dict[str, Any]:
     return {"ok": True, "status": "healthy"}
 
 
+@app.get("/users", response_class=HTMLResponse)
+def users_page() -> str:
+        user_docs = list(users.find().sort("updatedAt", -1))
+        total_users = len(user_docs)
+        total_starts = sum(int(doc.get("startCount") or 0) for doc in user_docs)
+
+        rows: list[str] = []
+        for index, doc in enumerate(user_docs, start=1):
+            name = escape(str(doc.get("name") or "-"))
+            username_raw = str(doc.get("username") or "").strip()
+            username = f"@{escape(username_raw)}" if username_raw else "-"
+            chat_id = escape(str(doc.get("chatId") or "-"))
+            start_count = escape(str(doc.get("startCount") or 0))
+            rows.append(
+                    "<tr>"
+                    f"<td>{index}</td>"
+                    f"<td>{name}</td>"
+                    f"<td>{username}</td>"
+                    f"<td>{chat_id}</td>"
+                    f"<td>{start_count}</td>"
+                    "</tr>"
+            )
+
+        table_rows = "".join(rows) if rows else "<tr><td colspan='5'>No users yet.</td></tr>"
+        return f"""
+<!doctype html>
+<html>
+    <head>
+        <meta charset='utf-8' />
+        <meta name='viewport' content='width=device-width, initial-scale=1' />
+        <title>Akinator Bot Users</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 24px; }}
+            h1 {{ margin-bottom: 4px; }}
+            .muted {{ color: #666; margin-top: 0; }}
+            .stats {{ margin: 16px 0; font-size: 16px; }}
+            table {{ border-collapse: collapse; width: 100%; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            th {{ background: #f6f6f6; }}
+        </style>
+    </head>
+    <body>
+        <h1>Akinator Bot Users</h1>
+        <p class='muted'>Users tracked when they run /start or /new</p>
+        <div class='stats'><strong>Total users:</strong> {total_users} &nbsp;|&nbsp; <strong>Total starts:</strong> {total_starts}</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Name</th>
+                    <th>Username</th>
+                    <th>Chat ID</th>
+                    <th>Start Count</th>
+                </tr>
+            </thead>
+            <tbody>
+                {table_rows}
+            </tbody>
+        </table>
+    </body>
+</html>
+"""
+
+
 @app.on_event("startup")
 def startup() -> None:
     configure_webhook_from_env()
@@ -455,7 +551,7 @@ async def telegram_webhook(
         chat_id = (message.get("chat") or {}).get("id")
         text = (message.get("text") or "").strip()
         if chat_id and text in {"/start", "/new"}:
-            handle_start(chat_id)
+            handle_start(chat_id, message.get("from") or {})
         return {"ok": True}
 
     if callback_query:
