@@ -69,7 +69,7 @@ def configure_webhook_from_env() -> None:
     response = telegram("setWebhook", payload)
     if not response.get("ok"):
         description = response.get("description") or "Unknown setWebhook error"
-        raise RuntimeError(f"Failed to configure webhook: {description}")
+        print(f"Webhook setup warning: {description}")
 
 
 def run_bridge(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -98,8 +98,19 @@ def run_bridge(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def telegram(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     response = requests.post(f"{API_URL}/{method}", json=payload, timeout=20)
-    response.raise_for_status()
-    return response.json()
+
+    try:
+        data = response.json()
+    except Exception:
+        data = {
+            "ok": False,
+            "description": f"HTTP {response.status_code} with non-JSON response",
+        }
+
+    if response.status_code >= 400 and isinstance(data, dict) and "ok" not in data:
+        data["ok"] = False
+
+    return data
 
 
 def translate_to_amharic(text: str, enabled: bool) -> str:
