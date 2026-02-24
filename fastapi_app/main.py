@@ -132,6 +132,34 @@ def translate_to_amharic(text: str, enabled: bool) -> str:
         return text
 
 
+def send_or_edit_message(
+    chat_id: int,
+    text: str,
+    reply_markup: Dict[str, Any] | None = None,
+    parse_mode: str | None = None,
+    message_id: int | None = None,
+) -> None:
+    base_payload: Dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text,
+    }
+
+    if reply_markup is not None:
+        base_payload["reply_markup"] = reply_markup
+
+    if parse_mode:
+        base_payload["parse_mode"] = parse_mode
+
+    if message_id is not None:
+        edit_payload = dict(base_payload)
+        edit_payload["message_id"] = message_id
+        edit_response = telegram("editMessageText", edit_payload)
+        if edit_response.get("ok"):
+            return
+
+    telegram("sendMessage", base_payload)
+
+
 def language_keyboard() -> Dict[str, Any]:
     return {
         "inline_keyboard": [
@@ -216,21 +244,42 @@ def ask_language(chat_id: int) -> None:
     )
 
 
-def ask_theme(chat_id: int, lang: str) -> None:
+def ask_theme(chat_id: int, lang: str, message_id: int | None = None) -> None:
     text = "Choose a game theme before we start:" if lang == "en" else "ከመጀመር በፊት የጨዋታ አይነት ይምረጡ:"
-    telegram("sendMessage", {"chat_id": chat_id, "text": text, "reply_markup": theme_keyboard(lang)})
+    send_or_edit_message(chat_id, text, reply_markup=theme_keyboard(lang), message_id=message_id)
 
 
-def render_question(chat_id: int, lang: str, question: str, progress: float) -> None:
+def render_question(
+    chat_id: int,
+    lang: str,
+    question: str,
+    progress: float,
+    message_id: int | None = None,
+) -> None:
     question_text = translate_to_amharic(question, lang == "am")
     label = "Progress" if lang == "en" else "እድገት"
     text = f"🤔 {question_text}\n\n{label}: {progress:.1f}%"
-    telegram("sendMessage", {"chat_id": chat_id, "text": text, "reply_markup": game_keyboard(lang)})
+    send_or_edit_message(chat_id, text, reply_markup=game_keyboard(lang), message_id=message_id)
 
 
-def render_guess(chat_id: int, lang: str, name: str, description: str, photo_url: str) -> None:
+def render_guess(
+    chat_id: int,
+    lang: str,
+    name: str,
+    description: str,
+    photo_url: str,
+    message_id: int | None = None,
+) -> None:
     label = "I guess" if lang == "en" else "ግምቴ"
     text = f"🎯 {label}: *{name}*\n\n{description}"
+    send_or_edit_message(
+        chat_id,
+        text,
+        reply_markup=win_keyboard(lang),
+        parse_mode="Markdown",
+        message_id=message_id,
+    )
+
     if photo_url:
         telegram(
             "sendPhoto",
@@ -242,17 +291,6 @@ def render_guess(chat_id: int, lang: str, name: str, description: str, photo_url
                 "reply_markup": win_keyboard(lang),
             },
         )
-        return
-
-    telegram(
-        "sendMessage",
-        {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "Markdown",
-            "reply_markup": win_keyboard(lang),
-        },
-    )
 
 
 def parse_action(data: str) -> Dict[str, str] | None:
@@ -273,7 +311,7 @@ def handle_start(chat_id: int) -> None:
     ask_language(chat_id)
 
 
-def handle_theme(chat_id: int, lang: str, theme_id: str) -> None:
+def handle_theme(chat_id: int, lang: str, theme_id: str, message_id: int | None = None) -> None:
     result = run_bridge(
         "start",
         {
@@ -300,17 +338,24 @@ def handle_theme(chat_id: int, lang: str, theme_id: str) -> None:
 
     if state.get("isWin"):
         guess = state.get("guess") or {}
-        render_guess(chat_id, lang, guess.get("name", ""), guess.get("description", ""), guess.get("photoUrl", ""))
+        render_guess(
+            chat_id,
+            lang,
+            guess.get("name", ""),
+            guess.get("description", ""),
+            guess.get("photoUrl", ""),
+            message_id,
+        )
         return
 
     q = state.get("question") or {}
-    render_question(chat_id, lang, q.get("text", ""), float(q.get("progress", 0)))
+    render_question(chat_id, lang, q.get("text", ""), float(q.get("progress", 0)), message_id)
 
 
-def handle_answer(chat_id: int, lang: str, answer_id: str) -> None:
+def handle_answer(chat_id: int, lang: str, answer_id: str, message_id: int | None = None) -> None:
     doc = sessions.find_one({"chatId": chat_id})
     if not doc:
-        ask_theme(chat_id, lang)
+        ask_theme(chat_id, lang, message_id)
         return
 
     result = run_bridge(
@@ -327,17 +372,24 @@ def handle_answer(chat_id: int, lang: str, answer_id: str) -> None:
 
     if state.get("isWin"):
         guess = state.get("guess") or {}
-        render_guess(chat_id, lang, guess.get("name", ""), guess.get("description", ""), guess.get("photoUrl", ""))
+        render_guess(
+            chat_id,
+            lang,
+            guess.get("name", ""),
+            guess.get("description", ""),
+            guess.get("photoUrl", ""),
+            message_id,
+        )
         return
 
     q = state.get("question") or {}
-    render_question(chat_id, lang, q.get("text", ""), float(q.get("progress", 0)))
+    render_question(chat_id, lang, q.get("text", ""), float(q.get("progress", 0)), message_id)
 
 
-def handle_back(chat_id: int, lang: str) -> None:
+def handle_back(chat_id: int, lang: str, message_id: int | None = None) -> None:
     doc = sessions.find_one({"chatId": chat_id})
     if not doc:
-        ask_theme(chat_id, lang)
+        ask_theme(chat_id, lang, message_id)
         return
 
     result = run_bridge(
@@ -353,11 +405,18 @@ def handle_back(chat_id: int, lang: str) -> None:
 
     if state.get("isWin"):
         guess = state.get("guess") or {}
-        render_guess(chat_id, lang, guess.get("name", ""), guess.get("description", ""), guess.get("photoUrl", ""))
+        render_guess(
+            chat_id,
+            lang,
+            guess.get("name", ""),
+            guess.get("description", ""),
+            guess.get("photoUrl", ""),
+            message_id,
+        )
         return
 
     q = state.get("question") or {}
-    render_question(chat_id, lang, q.get("text", ""), float(q.get("progress", 0)))
+    render_question(chat_id, lang, q.get("text", ""), float(q.get("progress", 0)), message_id)
 
 
 @app.get("/health")
@@ -403,7 +462,9 @@ async def telegram_webhook(
         data = callback_query.get("data") or ""
         action = parse_action(data)
         callback_id = callback_query.get("id")
-        chat_id = (((callback_query.get("message") or {}).get("chat") or {}).get("id"))
+        callback_message = callback_query.get("message") or {}
+        chat_id = ((callback_message.get("chat") or {}).get("id"))
+        callback_message_id = callback_message.get("message_id")
 
         if not action or not chat_id:
             if callback_id:
@@ -416,15 +477,15 @@ async def telegram_webhook(
             if action["type"] == "language":
                 lang = "am" if action["value"] == "am" else "en"
                 set_lang(chat_id, lang)
-                ask_theme(chat_id, lang)
+                ask_theme(chat_id, lang, callback_message_id)
             elif action["type"] == "theme":
-                handle_theme(chat_id, lang, action["value"])
+                handle_theme(chat_id, lang, action["value"], callback_message_id)
             elif action["type"] == "answer":
-                handle_answer(chat_id, lang, action["value"])
+                handle_answer(chat_id, lang, action["value"], callback_message_id)
             elif action["type"] == "back":
-                handle_back(chat_id, lang)
+                handle_back(chat_id, lang, callback_message_id)
             elif action["type"] == "restart":
-                ask_theme(chat_id, lang)
+                ask_theme(chat_id, lang, callback_message_id)
             else:
                 if callback_id:
                     telegram("answerCallbackQuery", {"callback_query_id": callback_id, "text": "Unknown action"})
