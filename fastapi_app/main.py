@@ -6,10 +6,11 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from typing import Any, Dict, Literal
+from urllib.parse import quote
 
 import requests
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Form, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from pymongo import MongoClient
 
@@ -56,6 +57,11 @@ class BridgeRequest(BaseModel):
 
 
 app = FastAPI(title="Akinator FastAPI Bot", version="1.0.0")
+
+ADMIN_EMAIL = "akinator@gmail.com"
+ADMIN_PASSWORD = "Akinator@123"
+ADMIN_SESSION_COOKIE = "users_admin_session"
+ADMIN_SESSION_VALUE = "ok"
 
 
 def configure_webhook_from_env() -> None:
@@ -457,7 +463,10 @@ def health() -> Dict[str, Any]:
 
 
 @app.get("/users", response_class=HTMLResponse)
-def users_page() -> str:
+def users_page(request: Request) -> HTMLResponse:
+    if request.cookies.get(ADMIN_SESSION_COOKIE) != ADMIN_SESSION_VALUE:
+        return RedirectResponse(url="/users/login", status_code=302)
+
         user_docs = list(users.find().sort("updatedAt", -1))
         total_users = len(user_docs)
         total_starts = sum(int(doc.get("startCount") or 0) for doc in user_docs)
@@ -480,7 +489,7 @@ def users_page() -> str:
             )
 
         table_rows = "".join(rows) if rows else "<tr><td colspan='5'>No users yet.</td></tr>"
-        return f"""
+        html = f"""
 <!doctype html>
 <html>
     <head>
@@ -518,6 +527,68 @@ def users_page() -> str:
     </body>
 </html>
 """
+                return HTMLResponse(content=html)
+
+
+@app.get("/users/login", response_class=HTMLResponse)
+def users_login_page(error: str | None = None) -> HTMLResponse:
+        safe_error = escape(error or "")
+        html = f"""
+<!doctype html>
+<html>
+    <head>
+        <meta charset='utf-8' />
+        <meta name='viewport' content='width=device-width, initial-scale=1' />
+        <title>Users Login</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 24px; max-width: 420px; }}
+            h1 {{ margin-bottom: 16px; }}
+            label {{ display: block; margin: 10px 0 6px; }}
+            input {{ width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; }}
+            button {{ margin-top: 14px; padding: 10px 14px; border: 0; border-radius: 6px; cursor: pointer; }}
+            .error {{ color: #c00; margin-top: 10px; }}
+        </style>
+    </head>
+    <body>
+        <h1>Users Login</h1>
+        <form method='post' action='/users/login'>
+            <label for='email'>Email</label>
+            <input id='email' name='email' type='email' required />
+
+            <label for='password'>Password</label>
+            <input id='password' name='password' type='password' required />
+
+            <button type='submit'>Login</button>
+        </form>
+        {f"<p class='error'>{safe_error}</p>" if safe_error else ""}
+    </body>
+</html>
+"""
+        return HTMLResponse(content=html)
+
+
+@app.post("/users/login")
+def users_login_submit(email: str = Form(...), password: str = Form(...)) -> RedirectResponse:
+        if email.strip().lower() != ADMIN_EMAIL or password != ADMIN_PASSWORD:
+                return RedirectResponse(url=f"/users/login?error={quote('Invalid credentials')}", status_code=302)
+
+        response = RedirectResponse(url="/users", status_code=302)
+        response.set_cookie(
+                key=ADMIN_SESSION_COOKIE,
+                value=ADMIN_SESSION_VALUE,
+                httponly=True,
+                samesite="lax",
+                secure=True,
+                max_age=60 * 60 * 8,
+        )
+        return response
+
+
+@app.post("/users/logout")
+def users_logout() -> RedirectResponse:
+        response = RedirectResponse(url="/users/login", status_code=302)
+        response.delete_cookie(ADMIN_SESSION_COOKIE)
+        return response
 
 
 @app.on_event("startup")
