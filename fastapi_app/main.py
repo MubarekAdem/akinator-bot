@@ -33,6 +33,7 @@ db = mongo[MONGODB_DB_NAME]
 sessions = db["game_sessions"]
 chat_prefs = db["chat_prefs"]
 users = db["users"]
+guesses = db["guesses"]
 
 API_URL = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -280,6 +281,8 @@ def render_guess(
     photo_url: str,
     message_id: int | None = None,
 ) -> None:
+    track_final_guess(chat_id, lang, name, description, photo_url)
+
     label = "I guess" if lang == "en" else "ግምቴ"
     text = f"🎯 {label}: *{name}*\n\n{description}"
     send_or_edit_message(
@@ -337,6 +340,39 @@ def track_user_start(chat_id: int, user: Dict[str, Any] | None) -> None:
             },
             "$inc": {
                 "startCount": 1,
+            },
+        },
+        upsert=True,
+    )
+
+
+def track_final_guess(
+    chat_id: int,
+    lang: str,
+    name: str,
+    description: str,
+    photo_url: str,
+) -> None:
+    now = datetime.now(timezone.utc)
+    guesses.insert_one(
+        {
+            "chatId": chat_id,
+            "lang": lang,
+            "guessName": name,
+            "guessDescription": description,
+            "guessPhotoUrl": photo_url,
+            "createdAt": now,
+        }
+    )
+
+    users.update_one(
+        {"chatId": chat_id},
+        {
+            "$inc": {"guessCount": 1},
+            "$set": {
+                "lastGuessName": name,
+                "lastGuessAt": now,
+                "updatedAt": now,
             },
         },
         upsert=True,
@@ -470,6 +506,7 @@ def users_page(request: Request) -> HTMLResponse:
     user_docs = list(users.find().sort("updatedAt", -1))
     total_users = len(user_docs)
     total_starts = sum(int(doc.get("startCount") or 0) for doc in user_docs)
+    total_guesses = sum(int(doc.get("guessCount") or 0) for doc in user_docs)
 
     rows: list[str] = []
     for index, doc in enumerate(user_docs, start=1):
@@ -478,6 +515,8 @@ def users_page(request: Request) -> HTMLResponse:
         username = f"@{escape(username_raw)}" if username_raw else "-"
         chat_id = escape(str(doc.get("chatId") or "-"))
         start_count = escape(str(doc.get("startCount") or 0))
+        guess_count = escape(str(doc.get("guessCount") or 0))
+        last_guess = escape(str(doc.get("lastGuessName") or "-"))
         rows.append(
             "<tr>"
             f"<td>{index}</td>"
@@ -485,10 +524,12 @@ def users_page(request: Request) -> HTMLResponse:
             f"<td>{username}</td>"
             f"<td>{chat_id}</td>"
             f"<td>{start_count}</td>"
+            f"<td>{guess_count}</td>"
+            f"<td>{last_guess}</td>"
             "</tr>"
         )
 
-    table_rows = "".join(rows) if rows else "<tr><td colspan='5'>No users yet.</td></tr>"
+    table_rows = "".join(rows) if rows else "<tr><td colspan='7'>No users yet.</td></tr>"
     html = (
         "<!doctype html>"
         "<html>"
@@ -509,9 +550,9 @@ def users_page(request: Request) -> HTMLResponse:
         "<body>"
         "<h1>Akinator Bot Users</h1>"
         "<p class='muted'>Users tracked when they run /start or /new</p>"
-        f"<div class='stats'><strong>Total users:</strong> {total_users} &nbsp;|&nbsp; <strong>Total starts:</strong> {total_starts}</div>"
+        f"<div class='stats'><strong>Total users:</strong> {total_users} &nbsp;|&nbsp; <strong>Total starts:</strong> {total_starts} &nbsp;|&nbsp; <strong>Total guesses:</strong> {total_guesses}</div>"
         "<table>"
-        "<thead><tr><th>#</th><th>Name</th><th>Username</th><th>Chat ID</th><th>Start Count</th></tr></thead>"
+        "<thead><tr><th>#</th><th>Name</th><th>Username</th><th>Chat ID</th><th>Start Count</th><th>Guess Count</th><th>Last Guess</th></tr></thead>"
         f"<tbody>{table_rows}</tbody>"
         "</table>"
         "</body>"
