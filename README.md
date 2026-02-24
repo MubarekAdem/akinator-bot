@@ -46,6 +46,9 @@ curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
   -d '{"url":"https://<your-domain>/telegram/webhook","secret_token":"<TELEGRAM_WEBHOOK_SECRET>"}'
 ```
 
+If `TELEGRAM_WEBHOOK_URL` is set in env, the app also auto-runs `setWebhook` on startup.
+```
+
 Webhook endpoint in this app:
 
 `/telegram/webhook`

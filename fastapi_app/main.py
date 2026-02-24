@@ -18,6 +18,7 @@ AKINATOR_REGION = os.getenv("AKINATOR_REGION", "en").strip() or "en"
 AKINATOR_CHILD_MODE = os.getenv("AKINATOR_CHILD_MODE", "false").strip().lower() == "true"
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017").strip()
 MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "akinator_bot").strip() or "akinator_bot"
+TELEGRAM_WEBHOOK_URL = os.getenv("TELEGRAM_WEBHOOK_URL", "").strip()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
 
 if not TOKEN:
@@ -51,6 +52,24 @@ class BridgeRequest(BaseModel):
 
 
 app = FastAPI(title="Akinator FastAPI Bot", version="1.0.0")
+
+
+def configure_webhook_from_env() -> None:
+    if not TELEGRAM_WEBHOOK_URL:
+        return
+
+    payload: Dict[str, Any] = {
+        "url": TELEGRAM_WEBHOOK_URL,
+        "allowed_updates": ["message", "callback_query"],
+    }
+
+    if TELEGRAM_WEBHOOK_SECRET:
+        payload["secret_token"] = TELEGRAM_WEBHOOK_SECRET
+
+    response = telegram("setWebhook", payload)
+    if not response.get("ok"):
+        description = response.get("description") or "Unknown setWebhook error"
+        raise RuntimeError(f"Failed to configure webhook: {description}")
 
 
 def run_bridge(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -333,6 +352,11 @@ def handle_back(chat_id: int, lang: str) -> None:
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {"ok": True, "status": "healthy"}
+
+
+@app.on_event("startup")
+def startup() -> None:
+    configure_webhook_from_env()
 
 
 @app.post("/bridge")
