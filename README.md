@@ -27,7 +27,7 @@ py -3 -m pip install -r requirements.txt
 From project root:
 
 ```bash
-py -m uvicorn fastapi_app.main:app --host 0.0.0.0 --port 8000
+py -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 Health check:
