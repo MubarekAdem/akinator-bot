@@ -504,6 +504,15 @@ def users_page(request: Request) -> HTMLResponse:
         return RedirectResponse(url="/users/login", status_code=302)
 
     user_docs = list(users.find().sort("updatedAt", -1))
+    guess_docs = list(guesses.find().sort("createdAt", -1))
+
+    guesses_by_chat: Dict[int, list[Dict[str, Any]]] = {}
+    for guess_doc in guess_docs:
+        chat_id_value = guess_doc.get("chatId")
+        if not isinstance(chat_id_value, int):
+            continue
+        guesses_by_chat.setdefault(chat_id_value, []).append(guess_doc)
+
     total_users = len(user_docs)
     total_starts = sum(int(doc.get("startCount") or 0) for doc in user_docs)
     total_guesses = sum(int(doc.get("guessCount") or 0) for doc in user_docs)
@@ -517,6 +526,37 @@ def users_page(request: Request) -> HTMLResponse:
         start_count = escape(str(doc.get("startCount") or 0))
         guess_count = escape(str(doc.get("guessCount") or 0))
         last_guess = escape(str(doc.get("lastGuessName") or "-"))
+
+        user_guess_items = guesses_by_chat.get(doc.get("chatId"), [])
+        history_rows: list[str] = []
+        for guess_index, guess_item in enumerate(user_guess_items, start=1):
+            guess_name = escape(str(guess_item.get("guessName") or "-"))
+            guess_desc = escape(str(guess_item.get("guessDescription") or ""))
+            created_at = guess_item.get("createdAt")
+            created_at_text = escape(created_at.isoformat() if hasattr(created_at, "isoformat") else "-")
+            history_rows.append(
+                "<tr>"
+                f"<td>{guess_index}</td>"
+                f"<td>{guess_name}</td>"
+                f"<td>{guess_desc}</td>"
+                f"<td>{created_at_text}</td>"
+                "</tr>"
+            )
+
+        history_table = (
+            "<table class='nested'>"
+            "<thead><tr><th>#</th><th>Guess</th><th>Description</th><th>At (UTC)</th></tr></thead>"
+            f"<tbody>{''.join(history_rows) if history_rows else '<tr><td colspan=\"4\">No guesses yet.</td></tr>'}</tbody>"
+            "</table>"
+        )
+
+        history_details = (
+            "<details>"
+            f"<summary>View all guesses ({len(user_guess_items)})</summary>"
+            f"{history_table}"
+            "</details>"
+        )
+
         rows.append(
             "<tr>"
             f"<td>{index}</td>"
@@ -526,10 +566,11 @@ def users_page(request: Request) -> HTMLResponse:
             f"<td>{start_count}</td>"
             f"<td>{guess_count}</td>"
             f"<td>{last_guess}</td>"
+            f"<td>{history_details}</td>"
             "</tr>"
         )
 
-    table_rows = "".join(rows) if rows else "<tr><td colspan='7'>No users yet.</td></tr>"
+    table_rows = "".join(rows) if rows else "<tr><td colspan='8'>No users yet.</td></tr>"
     html = (
         "<!doctype html>"
         "<html>"
@@ -545,6 +586,10 @@ def users_page(request: Request) -> HTMLResponse:
         "table { border-collapse: collapse; width: 100%; }"
         "th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }"
         "th { background: #f6f6f6; }"
+        "details { margin: 0; }"
+        "summary { cursor: pointer; }"
+        "table.nested { margin-top: 8px; }"
+        "table.nested th, table.nested td { font-size: 12px; }"
         "</style>"
         "</head>"
         "<body>"
@@ -552,7 +597,7 @@ def users_page(request: Request) -> HTMLResponse:
         "<p class='muted'>Users tracked when they run /start or /new</p>"
         f"<div class='stats'><strong>Total users:</strong> {total_users} &nbsp;|&nbsp; <strong>Total starts:</strong> {total_starts} &nbsp;|&nbsp; <strong>Total guesses:</strong> {total_guesses}</div>"
         "<table>"
-        "<thead><tr><th>#</th><th>Name</th><th>Username</th><th>Chat ID</th><th>Start Count</th><th>Guess Count</th><th>Last Guess</th></tr></thead>"
+        "<thead><tr><th>#</th><th>Name</th><th>Username</th><th>Chat ID</th><th>Start Count</th><th>Guess Count</th><th>Last Guess</th><th>Guess History</th></tr></thead>"
         f"<tbody>{table_rows}</tbody>"
         "</table>"
         "</body>"
